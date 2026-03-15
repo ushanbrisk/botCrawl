@@ -1,0 +1,173 @@
+
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+import json
+
+
+# 创建 Session
+session = requests.Session()
+
+# 设置请求头（模拟真实浏览器）
+headers = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Referer': 'https://music.163.com/',
+    'Accept': '*/*',
+    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+}
+
+# 配置重试策略
+retry_strategy = Retry(
+    total=3,
+    backoff_factor=1,
+    status_forcelist=[429, 500, 502, 503, 504],
+)
+
+adapter = HTTPAdapter(max_retries=retry_strategy)
+session.mount("http://", adapter)
+session.mount("https://", adapter)
+
+
+
+
+cookies = {
+    '__csrf': '4bdd36ade23585f55c8b31b59c110b92',
+    'MUSIC_U': '00BFE29E94F25A667EEC56E29FCC3A2DCAF6A392969F2DD09F55A6DCD32640AE4A9541E079A65D106EEE8D831E8CF11EBB871F9AB56B27CF6DCC3443248264BD85B9AC8552E5D128A335CFDDE02304C7D0AADA30653207C8076C3057910A163C4E1FEA9D55BE65B10E5BFB2DE0734055FB1053CF9A5D3B58D35DF4808781C2879719A2CDCD9E85E4D6473E1370677E2E9F507D783691D849F083A96E70F57C56EA17E203F0AC0F16AB9E53C6323D680D8BC66CDE06C9E8EB410F8FF0E5B23EF406CF2A54A87F8F50E186B9B426CAAAA24F349681C3B3D58CA28598900897DE60033075F40C2D922A6C2E4F34A458AFC84EC0FD2637B9163418FCD814B238FE41D4A0B3994146D9E5BB06DC92F2AE0A08CFC9C9EFE1EB6FBF39771F3084420BD741C2778947D8E7D73A6035D2234C3D880627DC8C7FEF4F5F7276C455D215969AA4293FB395D59CAB6C6A53413644373295CD01AC6631F2E85E4FE1B4A61EE74CF2564BD5ED92E617FF97F93BC535093A88E0DCBD06F86497FF0B5019C1ADB733F8C800C7A8966C7007C1CFE7F3F8E64F38'
+}
+song_id = 287063
+PORT=5000
+SONG_DOWNLOAD_FOLDER="/ssd/music/song_download/"
+COMMENT_DOWNLOAD_FOLDER = "/ssd/music/comments_download/"
+META_DOWNLOAD_FOLDER = "/ssd/music/meta_download/"
+
+"""
+input: song_id
+output: download url,   meta data of song
+"""
+def get_url(song_id:int, **cookies):
+    response = session.get(
+        f'http://localhost:{PORT}/song/url?id={song_id}&level=exhigh', 
+        cookies=cookies,
+        headers=headers,
+        timeout=10
+    )
+
+    print("=" * 50)
+    print("响应状态码:", response.status_code)
+    print("响应头:", response.headers.get('content-type'))
+    print("=" * 50)
+
+    try:
+        data = response.json()
+
+        if data.get('code') == 200:
+            # 获取歌曲信息列表
+            songs = data.get('data', [])
+            song = songs[0]
+            # for song in songs:
+            song_id = song.get('id')
+            song_url = song.get('url')
+
+            if song_url:
+                print(f"歌曲ID: {song_id}")
+                print(f"下载链接: {song_url}")
+
+                print(f"音质: {song.get('br')} kbps")
+
+                print(f"文件大小: {song.get('size') / 1024 / 1024} M字节")
+
+                return song_url, data
+            else:
+                print(f"歌曲ID {song_id} 无法获取链接，原因: {song.get('message')}")
+                print(f"错误码: {song.get('code')}")
+        else:
+            print(f"API请求失败，错误码: {data.get('code')}")
+
+
+    except Exception as e:
+        print(f"解析JSON失败: {e}")
+        print("原始响应文本:")
+        print(response.text)
+
+
+
+#需要为每个url准备好文件名字, 可以先 {song_id}.mp3
+def download_song(url, filename):
+    """实际下载歌曲"""
+    print(f"开始下载: {filename}")
+    audio_response = requests.get(url, stream=True)
+
+    with open(filename, 'wb') as f:
+        for chunk in audio_response.iter_content(chunk_size=1024):
+            f.write(chunk)
+
+    print(f"下载完成: {filename}")
+
+
+
+"""
+    1.hotComments字段的特殊性：网易云音乐官方接口通常只在第一页（offset=0）返回 hotComments字段。后续页面的 hotComments通常为空，热门评论会混在普通评论（comments字段）中，但排序靠前。
+    2.获取前 1000 条热门评论：如果你想要的是“点赞数最高的前 1000 条”，建议先获取第一页的 hotComments，然后继续获取后续页面的 comments，并按照 likedCount（点赞数）进行排序，取前 1000 条。因为热门评论的分布可能不连续。
+    3.接口限制：网易云音乐官方接口对非登录用户通常有数据量限制（如只返回前 2 万条评论），且热门评论的展示数量也有限制，可能无法真正获取到 48 万条数据中的全部热门评论
+"""
+#下载评论
+def download_comments(song_id):
+    # 下载评论信息
+
+    comment_response = requests.get(f"http://localhost:{PORT}/comment/music?id={song_id}&limit=1000")
+    comment_data = comment_response.json()
+
+    # 提取评论内容
+    hot_comments_list = []
+    comments_list = []
+    for comment in comment_data['hotComments']:
+        nickname = comment['user']['nickname']
+        content = comment['content']
+        likedcounts = comment['likedCount']
+        record = {'nickname': nickname, 'content': content, 'likedcounts': likedcounts}
+        hot_comments_list.append(record)
+
+    for comment in comment_data['comments']:
+        nickname = comment['user']['nickname']
+        content = comment['content']
+        likedcounts = comment['likedCount']
+        record = {'nickname': nickname, 'content': content, 'likedcounts': likedcounts}
+        comments_list.append(record)
+
+    total_comment_data = {
+        "hotComments": hot_comments_list,
+        "comments": comments_list
+    }
+
+    # 保存为 JSON 文件
+    with open(f"{COMMENT_DOWNLOAD_FOLDER}{song_id}_comments.json", 'w', encoding='utf-8') as f:
+        json.dump(total_comment_data, f, ensure_ascii=False, indent=4)
+
+
+#此函数包含了download_song, 以及下载meta数据功能
+def download_song_and_meta(song_id, **cookies):
+    print(f"start downloading song, song id:{song_id}")
+    url, download_meta_data = get_url(song_id, **cookies)
+    #下载音乐文件
+    download_song(url, f"{SONG_DOWNLOAD_FOLDER}{song_id}.mp3")
+
+    #保存meta信息
+    with open(f"{META_DOWNLOAD_FOLDER}{song_id}_meta.json", "w", encoding="utf-8") as f:
+        json.dump(download_meta_data, f, ensure_ascii=False, indent=2)
+
+
+if __name__ == '__main__':
+
+    #already downloaded song_id list
+    downloaded_song_id_list = "song_already_downloaded.json"
+    
+
+    #read song_id list
+    song_id_list = []
+
+    for song_id in song_id_list:
+        download_song_and_meta(song_id, **cookies)
+        download_comments(song_id)
+
+
+
