@@ -110,9 +110,6 @@ def main_download_task(song_list: List[Dict[str, Any]]) -> None:
         # 2. 遍历歌曲列表
         for song_info in song_list:
 
-            # 修改7: 添加随机化的请求间隔（3-15秒，更大的随机范围）
-            sleep_time = random.uniform(3, 15)
-            time.sleep(sleep_time)
 
             song_id = song_info["id"]
 
@@ -151,6 +148,12 @@ def main_download_task(song_list: List[Dict[str, Any]]) -> None:
                 # 连续3次失败，触发封禁检测
                 if consecutive_errors >= 3:
                     handle_blocked(manager, consecutive_errors)
+
+
+            # 修改7: 添加随机化的请求间隔（3-15秒，更大的随机范围）
+            sleep_time = random.uniform(3, 15)
+            time.sleep(sleep_time)
+
 
         # 5. 任务完成，保存最终状态
         manager.save_state()
@@ -193,7 +196,7 @@ def safe_download_task(song_list: List[Dict[str, Any]]) -> None:
 # 使用示例
 if __name__ == "__main__":
 
-    task_song_id_list_file = "/home/luke/distributed_machine_learning/download_neteaseclude/unique_song_ids_shuffled.json"
+    task_song_id_list_file = "/home/luke/distributed_machine_learning/botCrawl/unique_songs_by_name_part1.json"
 
     # 方法1：读取整个JSON文件
     with open(task_song_id_list_file, 'r', encoding='utf-8') as f:
