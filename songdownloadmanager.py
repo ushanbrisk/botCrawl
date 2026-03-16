@@ -75,8 +75,14 @@ class SongDownloadManager:
             # 这里可以选择重试或保存到临时文件
 
     def is_downloaded(self, song_id: int) -> bool:
-        """检查歌曲是否已下载"""
-        return song_id in self.state.get("song_ids_downloaded", [])
+        """检查歌曲是否已下载或之前失败过"""
+        # 检查是否已下载
+        if song_id in self.state.get("song_ids_downloaded", []):
+            return True
+        # 检查是否在失败列表中（之前下载失败过，跳过）
+        if str(song_id) in self.state.get("failed_attempts", {}):
+            return True
+        return False
 
     def mark_as_downloaded(self, song_id: int) -> None:
         """标记歌曲为已下载"""

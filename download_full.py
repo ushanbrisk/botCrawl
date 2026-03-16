@@ -113,9 +113,13 @@ def main_download_task(song_list: List[Dict[str, Any]]) -> None:
 
             song_id = song_info["id"]
 
-            # 检查是否已下载
+            # 检查是否已下载或之前失败过
             if manager.is_downloaded(song_id):
-                logger.info(f"歌曲 {song_id} 已下载， 跳过")
+                # 检查具体是哪个原因
+                if song_id in manager.state.get("song_ids_downloaded", []):
+                    logger.info(f"歌曲 {song_id} 已下载，跳过")
+                else:
+                    logger.info(f"歌曲 {song_id} 之前下载失败，跳过")
                 continue
 
             # 3. 尝试下载
