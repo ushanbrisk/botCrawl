@@ -1,0 +1,9 @@
+传输命令: bash scp_with_progress.sh
+
+已经传输的文件, 记录在scp_progress.txt
+
+
+
+
+
+删除命令: bash delete_files.sh
