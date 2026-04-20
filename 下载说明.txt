@@ -1,0 +1,10 @@
+1. python download_full.py
+
+下载音乐文件,
+
+需要首先本地假设一个服务
+
+
+/home/luke/distributed_machine_learning/NeteaseCloudMusicApi
+
+

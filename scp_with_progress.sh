@@ -12,7 +12,7 @@
 
 # 配置参数
 REMOTE_DIR="/ssd/music/song_download"
-LOCAL_DIR="/ssd4/music/song_download"
+LOCAL_DIR="/ssd12/music/song_download"
 LOCAL_USER="luke"
 LOCAL_HOST="big"
 SSH_KEY=""  # 如果需要指定密钥，取消注释并填入路径，如：SSH_KEY="-i ~/.ssh/id_rsa"

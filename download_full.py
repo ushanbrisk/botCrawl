@@ -11,7 +11,7 @@ from download_music import download_song_and_meta, download_comments, cookies
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-PORT=5000
+PORT=4000
 SONG_DOWNLOAD_FOLDER="/ssd/music/song_download/"
 COMMENT_DOWNLOAD_FOLDER = "/ssd/music/comments_download/"
 META_DOWNLOAD_FOLDER = "/ssd/music/meta_download/"
@@ -20,8 +20,8 @@ META_DOWNLOAD_FOLDER = "/ssd/music/meta_download/"
 # 修改2: 添加分批次下载配置
 # =============================================================================
 BATCH_SIZE = 25  # 每批次下载数量（20-30首）
-BATCH_REST_MIN = 2  # 每批次完成后休息最小时间（分钟）
-BATCH_REST_MAX = 4  # 每批次完成后休息最大时间（分钟）
+BATCH_REST_MIN = 1  # 每批次完成后休息最小时间（分钟）
+BATCH_REST_MAX = 2  # 每批次完成后休息最大时间（分钟）
 
 
 def download_song(song_id: int) -> bool:
@@ -38,8 +38,8 @@ def download_song(song_id: int) -> bool:
         logger.info(f"开始下载歌曲 {song_id}")
 
         download_song_and_meta(song_id, **cookies)
-
-        download_comments(song_id)
+        #连续被封禁, 可能触发了机制, 先暂停comment
+        #download_comments(song_id)
 
         logger.info(f"歌曲 {song_id} 下载完成")
         return True
@@ -200,7 +200,7 @@ def safe_download_task(song_list: List[Dict[str, Any]]) -> None:
 # 使用示例
 if __name__ == "__main__":
 
-    task_song_id_list_file = "/home/luke/distributed_machine_learning/botCrawl/unique_songs_by_name_part1.json"
+    task_song_id_list_file = "/home/luke/distributed_machine_learning/botCrawl/unique_songs_by_name_part4.json"
 
     # 方法1：读取整个JSON文件
     with open(task_song_id_list_file, 'r', encoding='utf-8') as f:
