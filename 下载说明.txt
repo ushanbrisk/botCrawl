@@ -7,4 +7,11 @@
 
 /home/luke/distributed_machine_learning/NeteaseCloudMusicApi
 
+PORT=4000 node app.js
+
+
+这里面输入的song_id是通过指定 unique_songs_by_name_partx.json来实现的
+
+
+
 

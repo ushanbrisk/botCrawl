@@ -1,31 +1,23 @@
 import aiohttp
 import asyncio
 import json
-import sqlite3
-import csv
 import os
 from datetime import datetime
-from typing import Optional
-from sqlalchemy import create_engine, Column, Integer, String, Text, BigInteger
-from sqlalchemy.orm import sessionmaker, declarative_base, Session
 from pymongo import MongoClient
 from textblob import TextBlob
-from sqlalchemy import Float
 
 # ================== 配置区 ==================
-SONG_ID = 186016
+# 正式文件
+SONGS_FILE = "unique_songs_by_name_part1.json"
+# 测试文件
+TEST_SONGS_FILE = "test_songs.json"
 BASE_URL = "http://localhost:4000/comment/music"
 LIMIT = 100
 CONCURRENCY = 5
 DELAY = 1.2
 MAX_RETRIES = 3
 
-# 存储方式：sqlite / mongodb
-STORAGE_TYPE = "sqlite"  # 改成 "mongodb" 即可
-
-SQLITE_DB = "netease_comments.db"
-OFFSET_FILE = "offset.txt"
-
+# MongoDB 配置
 MONGO_URI = "mongodb://localhost:27017/"
 MONGO_DB = "netease"
 MONGO_COLLECTION = "comments"
@@ -36,95 +28,83 @@ HEADERS = {
 
 semaphore = asyncio.Semaphore(CONCURRENCY)
 
-# ================== 数据库模型 ==================
-Base = declarative_base()
+# ================== MongoDB 客户端（单例） ==================
+_mongo_client = None
+_mongo_collection = None
 
-class Comment(Base):
-    __tablename__ = "comments"
-
-    id = Column(Integer, primary_key=True)
-    commentId = Column(BigInteger, unique=True)
-    content = Column(Text)
-    time = Column(BigInteger)
-    timeStr = Column(String)
-    likedCount = Column(Integer)
-    userId = Column(BigInteger)
-    nickname = Column(String)
-    vipType = Column(Integer)
-    location = Column(String)
-    comment_type = Column(String)  # hot / normal
-    sentiment = Column(String)      # positive / neutral / negative
-    polarity = Column(Float)
-
-# ================== 存储抽象 ==================
-class Storage:
-    def save(self, comment):
-        raise NotImplementedError
-
-class SQLiteStorage(Storage):
-    def __init__(self):
-        self.engine = create_engine(f"sqlite:///{SQLITE_DB}")
-        Base.metadata.create_all(self.engine)
-        self.Session = sessionmaker(bind=self.engine)
-
-    def save(self, comment):
-        session: Session = self.Session()
-        try:
-            exists = session.query(Comment).filter_by(commentId=comment["commentId"]).first()
-            if not exists:
-                c = Comment(**comment)
-                session.add(c)
-                session.commit()
-        except Exception as e:
-            session.rollback()
-            print(f"[DB ERROR] {e}")
-        finally:
-            session.close()
-
-class MongoStorage(Storage):
-    def __init__(self):
-        client = MongoClient(MONGO_URI)
-        db = client[MONGO_DB]
-        self.collection = db[MONGO_COLLECTION]
-
-    def save(self, comment):
-        try:
-            self.collection.update_one(
-                {"commentId": comment["commentId"]},
-                {"$set": comment},
-                upsert=True
-            )
-        except Exception as e:
-            print(f"[MONGO ERROR] {e}")
+def get_mongo_collection():
+    global _mongo_client, _mongo_collection
+    if _mongo_collection is None:
+        _mongo_client = MongoClient(MONGO_URI)
+        db = _mongo_client[MONGO_DB]
+        _mongo_collection = db[MONGO_COLLECTION]
+        # 创建索引以加速查询
+        _mongo_collection.create_index("commentId", unique=True)
+        _mongo_collection.create_index([("song_id", 1), ("commentId", 1)])
+    return _mongo_collection
 
 # ================== 工具函数 ==================
-def load_offset():
-    if os.path.exists(OFFSET_FILE):
-        with open(OFFSET_FILE, "r") as f:
+def load_songs():
+    """加载歌曲列表"""
+    with open(SONGS_FILE, "r", encoding="utf-8") as f:
+        songs = json.load(f)
+    print(f"[INFO] 加载了 {len(songs)} 首歌曲")
+    return songs
+
+def load_songs_from_file(filepath):
+    """从指定文件加载歌曲列表"""
+    with open(filepath, "r", encoding="utf-8") as f:
+        songs = json.load(f)
+    print(f"[INFO] 加载了 {len(songs)} 首歌曲 from {filepath}")
+    return songs
+
+OFFSET_DIR = "/ssd4/music/comments/offset"
+
+def get_offset_file(song_id):
+    """获取某首歌的 offset 文件路径"""
+    return os.path.join(OFFSET_DIR, f"{song_id}.txt")
+
+def load_offset(song_id):
+    """加载某首歌的 offset"""
+    # 确保目录存在
+    os.makedirs(OFFSET_DIR, exist_ok=True)
+    offset_file = get_offset_file(song_id)
+    if os.path.exists(offset_file):
+        with open(offset_file, "r") as f:
             return int(f.read().strip())
     return 0
 
-def save_offset(offset):
-    with open(OFFSET_FILE, "w") as f:
+def save_offset(song_id, offset):
+    """保存某首歌的 offset"""
+    os.makedirs(OFFSET_DIR, exist_ok=True)
+    offset_file = get_offset_file(song_id)
+    with open(offset_file, "w") as f:
         f.write(str(offset))
 
 def analyze_sentiment(text):
-    blob = TextBlob(text)
-    polarity = blob.sentiment.polarity
-    if polarity > 0.1:
-        return "positive", polarity
-    elif polarity < -0.1:
-        return "negative", polarity
-    else:
-        return "neutral", polarity
+    """情感分析"""
+    try:
+        blob = TextBlob(text)
+        polarity = blob.sentiment.polarity
+        if polarity > 0.1:
+            return "positive", polarity
+        elif polarity < -0.1:
+            return "negative", polarity
+        else:
+            return "neutral", polarity
+    except:
+        return "neutral", 0.0
 
-def parse_comment(c, comment_type):
+def parse_comment(c, song_id, song_name, comment_type):
+    """解析评论数据"""
     user = c.get("user", {})
     content = c.get("content", "")
     sentiment, polarity = analyze_sentiment(content)
 
     return {
         "commentId": c.get("commentId"),
+        "song_id": song_id,
+        "song_name": song_name,
         "content": content,
         "time": c.get("time"),
         "timeStr": c.get("timeStr"),
@@ -138,10 +118,31 @@ def parse_comment(c, comment_type):
         "polarity": polarity
     }
 
+def save_to_mongodb(comments):
+    """批量保存到 MongoDB，返回新插入的评论数"""
+    if not comments:
+        return 0
+
+    collection = get_mongo_collection()
+    new_count = 0
+    for comment in comments:
+        try:
+            result = collection.update_one(
+                {"commentId": comment["commentId"]},
+                {"$setOnInsert": comment},
+                upsert=True
+            )
+            if result.upserted_id:
+                new_count += 1
+        except Exception as e:
+            print(f"[MONGO ERROR] {e}")
+    return new_count
+
 # ================== 爬虫核心 ==================
-async def fetch_page(session, offset, storage):
+async def fetch_page(session, song_id, song_name, offset, storage):
+    """获取单页评论，返回新插入的评论数"""
     params = {
-        "id": SONG_ID,
+        "id": song_id,
         "limit": LIMIT,
         "offset": offset
     }
@@ -151,7 +152,7 @@ async def fetch_page(session, offset, storage):
             try:
                 async with session.get(BASE_URL, params=params, headers=HEADERS, timeout=10) as resp:
                     if resp.status != 200:
-                        print(f"[WARN] offset={offset}, status={resp.status}")
+                        print(f"[WARN] song={song_id}, offset={offset}, status={resp.status}")
                         continue
 
                     data = await resp.json()
@@ -159,103 +160,180 @@ async def fetch_page(session, offset, storage):
                     comments = data.get("comments", [])
                     hot = data.get("hotComments", []) if offset == 0 else []
 
+                    parsed_comments = []
                     for c in hot:
-                        storage.save(parse_comment(c, "hot"))
+                        parsed_comments.append(parse_comment(c, song_id, song_name, "hot"))
                     for c in comments:
-                        storage.save(parse_comment(c, "normal"))
+                        parsed_comments.append(parse_comment(c, song_id, song_name, "normal"))
 
-                    print(f"[OK] offset={offset}, hot={len(hot)}, normal={len(comments)}")
+                    # 批量保存到 MongoDB，返回新插入的评论数
+                    new_count = storage(parsed_comments)
+
+                    print(f"[OK] song={song_id}, offset={offset}, hot={len(hot)}, normal={len(comments)}, new={new_count}")
 
                     await asyncio.sleep(DELAY)
-                    return data
+                    return data, new_count
 
             except Exception as e:
-                print(f"[RETRY {attempt}] offset={offset}, error={e}")
+                print(f"[RETRY {attempt}] song={song_id}, offset={offset}, error={e}")
                 await asyncio.sleep(2)
 
-    return None
+    return None, 0
 
-# ================== 主流程 ==================
-async def main():
-    if STORAGE_TYPE == "sqlite":
-        storage = SQLiteStorage()
-    else:
-        storage = MongoStorage()
+async def crawl_song(session, song_id, song_name, storage):
+    """爬取单首歌的所有评论"""
+    offset = load_offset(song_id)
+    print(f"[INFO] 开始爬取歌曲: {song_name} (id={song_id}), 从 offset={offset} 开始")
 
-    offset = load_offset()
-    print(f"[INFO] 从 offset={offset} 开始续爬")
+    # 用于统计
+    total_comments = 0
+    total_new_comments = 0
+    page_count = 0
+    consecutive_duplicate_pages = 0  # 连续重复页数计数
 
+    while True:
+        data, new_count = await fetch_page(session, song_id, song_name, offset, storage)
+
+        if not data:
+            print(f"[ERROR] song={song_id} 连续失败，终止")
+            break
+
+        # 保存当前 offset
+        save_offset(song_id, offset)
+
+        # 获取评论
+        comments = data.get("comments", [])
+        hot = data.get("hotComments", []) if offset == 0 else []
+        all_comments = hot + comments
+
+        if len(all_comments) == 0:
+            # 如果返回空数据，说明真的没有评论了
+            print(f"[INFO] song={song_id} 无更多评论, 共 {page_count} 页")
+            break
+
+        total_new_comments += new_count
+
+        # 如果新评论数为 0，说明都是重复的
+        if new_count == 0:
+            consecutive_duplicate_pages += 1
+            print(f"[WARN] song={song_id}, offset={offset}, 全部为重复评论 (连续 {consecutive_duplicate_pages} 页)")
+            if consecutive_duplicate_pages >= 3:
+                print(f"[INFO] song={song_id} 连续 3 页无新评论，停止爬取")
+                break
+        else:
+            consecutive_duplicate_pages = 0
+
+        if not data.get("more"):
+            if offset > 0 or len(comments) < LIMIT:
+                print(f"[INFO] song={song_id} 爬取完成, 共 {page_count + 1} 页")
+                break
+
+        # 计算评论数
+        total_comments += len(all_comments)
+        page_count += 1
+
+        offset += LIMIT
+
+    print(f"[INFO] 歌曲 {song_id} 完成, 总计爬取 {total_comments} 条, 新增 {total_new_comments} 条")
+    return total_new_comments
+
+async def main_with_songs(songs):
+    """使用给定的歌曲列表运行"""
     async with aiohttp.ClientSession() as session:
-        while True:
-            data = await fetch_page(session, offset, storage)
+        for song in songs:
+            song_id = song["id"]
+            song_name = song["name"]
 
-            if not data:
-                print("[ERROR] 连续失败，终止")
-                break
+            try:
+                await crawl_song(session, song_id, song_name, save_to_mongodb)
+            except Exception as e:
+                print(f"[ERROR] 爬取歌曲 {song_id} 时出错: {e}")
+                continue
 
-            save_offset(offset)
-
-            if not data.get("more"):
-                print("[INFO] 爬取完成")
-                break
-
-            offset += LIMIT
+            await asyncio.sleep(0.5)
 
 # ================== 分析函数（可选） ==================
 def analyze_time_distribution():
-    if STORAGE_TYPE == "sqlite":
-        conn = sqlite3.connect(SQLITE_DB)
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT substr(timeStr, 1, 7) as month, COUNT(*) 
-            FROM comments 
-            GROUP BY month 
-            ORDER BY month
-        """)
-        result = cur.fetchall()
-        print("\n📊 评论时间分布（按月）:")
-        for row in result:
-            print(f"{row[0]}: {row[1]} 条")
-        conn.close()
-
-    elif STORAGE_TYPE == "mongodb":
-        client = MongoClient(MONGO_URI)
-        db = client[MONGO_DB]
-        pipeline = [
-            {"$group": {"_id": {"$substr": ["$timeStr", 0, 7]}, "count": {"$sum": 1}}},
-            {"$sort": {"_id": 1}}
-        ]
-        result = list(db[MONGO_COLLECTION].aggregate(pipeline))
-        print("\n📊 评论时间分布（按月）:")
-        for r in result:
-            print(f"{r['_id']}: {r['count']} 条")
+    """分析评论时间分布"""
+    collection = get_mongo_collection()
+    pipeline = [
+        {"$group": {"_id": {"$substr": ["$timeStr", 0, 7]}, "count": {"$sum": 1}}},
+        {"$sort": {"_id": 1}}
+    ]
+    result = list(collection.aggregate(pipeline))
+    print("\n评论时间分布（按月）:")
+    for r in result:
+        print(f"{r['_id']}: {r['count']} 条")
 
 def analyze_sentiment_distribution():
-    if STORAGE_TYPE == "sqlite":
-        conn = sqlite3.connect(SQLITE_DB)
-        cur = conn.cursor()
-        cur.execute("SELECT sentiment, COUNT(*) FROM comments GROUP BY sentiment")
-        result = cur.fetchall()
-        print("\n🎯 情感分析结果:")
-        for row in result:
-            print(f"{row[0]}: {row[1]} 条")
-        conn.close()
+    """分析情感分布"""
+    collection = get_mongo_collection()
+    pipeline = [
+        {"$group": {"_id": "$sentiment", "count": {"$sum": 1}}}
+    ]
+    result = list(collection.aggregate(pipeline))
+    print("\n情感分析结果:")
+    for r in result:
+        print(f"{r['_id']}: {r['count']} 条")
 
-    elif STORAGE_TYPE == "mongodb":
-        client = MongoClient(MONGO_URI)
-        db = client[MONGO_DB]
-        pipeline = [
-            {"$group": {"_id": "$sentiment", "count": {"$sum": 1}}}
-        ]
-        result = list(db[MONGO_COLLECTION].aggregate(pipeline))
-        print("\n🎯 情感分析结果:")
-        for r in result:
-            print(f"{r['_id']}: {r['count']} 条")
+def analyze_by_song():
+    """按歌曲统计评论数"""
+    collection = get_mongo_collection()
+    pipeline = [
+        {"$group": {"_id": {"song_id": "$song_id", "song_name": "$song_name"}, "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}},
+        {"$limit": 20}
+    ]
+    result = list(collection.aggregate(pipeline))
+    print("\n评论数最多的歌曲 (Top 20):")
+    for r in result:
+        print(f"{r['_id']['song_name']} (id={r['_id']['song_id']}): {r['count']} 条")
+
+def get_collection_stats():
+    """获取集合统计信息"""
+    collection = get_mongo_collection()
+    total = collection.count_documents({})
+    songs = collection.distinct("song_id")
+    print(f"\n=== MongoDB 统计 ===")
+    print(f"总评论数: {total}")
+    print(f"歌曲数量: {len(songs)}")
 
 # ================== 入口 ==================
 if __name__ == "__main__":
-    asyncio.run(main())
+    import sys
+    import argparse
 
-    # # 分析
-    # analyze_time_distribution()
-    # analyze_sentiment_distribution()
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--test", action="store_true", help="使用测试文件")
+    parser.add_argument("--file", type=str, help="指定歌曲文件")
+    args, unknown = parser.parse_known_args()
+
+    # 分析命令 (先处理子命令)
+    if len(sys.argv) > 1:
+        cmd = sys.argv[1]
+        if cmd == "stats":
+            get_collection_stats()
+        elif cmd == "sentiment":
+            analyze_sentiment_distribution()
+        elif cmd == "time":
+            analyze_time_distribution()
+        elif cmd == "bysong":
+            analyze_by_song()
+        elif cmd == "test":
+            print("[TEST MODE] 使用测试文件:", TEST_SONGS_FILE)
+            songs = load_songs_from_file(TEST_SONGS_FILE)
+            asyncio.run(main_with_songs(songs))
+        elif args.test:
+            print("[TEST MODE] 使用测试文件:", TEST_SONGS_FILE)
+            songs = load_songs_from_file(TEST_SONGS_FILE)
+            asyncio.run(main_with_songs(songs))
+        elif args.file:
+            print("[INFO] 使用指定文件:", args.file)
+            songs = load_songs_from_file(args.file)
+            asyncio.run(main_with_songs(songs))
+        else:
+            songs = load_songs()
+            asyncio.run(main_with_songs(songs))
+    else:
+        songs = load_songs()
+        asyncio.run(main_with_songs(songs))

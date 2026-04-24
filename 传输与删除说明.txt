@@ -9,5 +9,7 @@
 删除命令: bash delete_files.sh
 
 
-把音乐文件scp给远程服务器上硬盘
+把音乐文件scp给远程服务器上硬盘, 需要设置远程服务器big的目标路径，比如 /ssd14/music/song_download
+
+
 

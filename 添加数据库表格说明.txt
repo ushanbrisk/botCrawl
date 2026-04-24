@@ -1,0 +1,10 @@
+(music) luke@luke-W780-G20:~/code_project/music-project/backend$ python utils/importer.py --init
+
+另外的一个项目中， 如上
+
+conda 是music
+
+utils/importer.py --init 初始化数据库， 会执行创建comments这张表格的任务
+
+以上是唯一需要在另外项目中执行的语句
+
