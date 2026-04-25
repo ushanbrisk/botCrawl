@@ -58,7 +58,7 @@ def load_songs_from_file(filepath):
     print(f"[INFO] 加载了 {len(songs)} 首歌曲 from {filepath}")
     return songs
 
-OFFSET_DIR = "/ssd4/music/comments/offset"
+OFFSET_DIR = "/ssd/music/comments/offset"
 
 def get_offset_file(song_id):
     """获取某首歌的 offset 文件路径"""
