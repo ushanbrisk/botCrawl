@@ -19,9 +19,9 @@ META_DOWNLOAD_FOLDER = "/ssd/music/meta_download/"
 # =============================================================================
 # 修改2: 添加分批次下载配置
 # =============================================================================
-BATCH_SIZE = 25  # 每批次下载数量（20-30首）
-BATCH_REST_MIN = 1  # 每批次完成后休息最小时间（分钟）
-BATCH_REST_MAX = 2  # 每批次完成后休息最大时间（分钟）
+BATCH_SIZE = 30  # 每批次下载数量（20-30首）
+BATCH_REST_MIN = 1.5  # 每批次完成后休息最小时间（分钟）
+BATCH_REST_MAX = 2.5  # 每批次完成后休息最大时间（分钟）
 
 
 def download_song(song_id: int) -> bool:
@@ -200,7 +200,7 @@ def safe_download_task(song_list: List[Dict[str, Any]]) -> None:
 # 使用示例
 if __name__ == "__main__":
 
-    task_song_id_list_file = "/home/luke/distributed_machine_learning/botCrawl/unique_songs_by_name_part4.json"
+    task_song_id_list_file = "/home/luke/distributed_machine_learning/botCrawl/unique_songs_by_name_part1.json"
 
     # 方法1：读取整个JSON文件
     with open(task_song_id_list_file, 'r', encoding='utf-8') as f:
