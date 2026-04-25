@@ -5,22 +5,26 @@ import os
 from datetime import datetime
 from pymongo import MongoClient
 from textblob import TextBlob
+from dotenv import load_dotenv
+
+# 加载环境变量
+load_dotenv()
 
 # ================== 配置区 ==================
 # 正式文件
-SONGS_FILE = "unique_songs_by_name_part1.json"
+SONGS_FILE = os.getenv("SONGS_FILE", "unique_songs_by_name_part1.json")
 # 测试文件
-TEST_SONGS_FILE = "test_songs.json"
-BASE_URL = "http://localhost:4000/comment/music"
+TEST_SONGS_FILE = os.getenv("TEST_SONGS_FILE", "test_songs.json")
+BASE_URL = os.getenv("BASE_URL", "http://localhost:4000/comment/music")
 LIMIT = 100
 CONCURRENCY = 5
 DELAY = 1.2
 MAX_RETRIES = 3
 
 # MongoDB 配置
-MONGO_URI = "mongodb://localhost:27017/"
-MONGO_DB = "netease"
-MONGO_COLLECTION = "comments"
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
+MONGO_DB = os.getenv("MONGO_DB", "netease")
+MONGO_COLLECTION = os.getenv("MONGO_COLLECTION", "comments")
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0"
@@ -58,10 +62,8 @@ def load_songs_from_file(filepath):
     print(f"[INFO] 加载了 {len(songs)} 首歌曲 from {filepath}")
     return songs
 
-
-OFFSET_DIR = "/ssd/music/comments/offset"
-PROGRESS_FILE = "/ssd/music/comments/progress.json"
-
+OFFSET_DIR = os.getenv("OFFSET_DIR", "/ssd4/music/comments/offset")
+PROGRESS_FILE = os.getenv("PROGRESS_FILE", "/ssd4/music/comments/progress.json")
 
 def get_offset_file(song_id):
     """获取某首歌的 offset 文件路径"""
