@@ -17,8 +17,9 @@ SONGS_FILE = os.getenv("SONGS_FILE", "unique_songs_by_name_part1.json")
 TEST_SONGS_FILE = os.getenv("TEST_SONGS_FILE", "test_songs.json")
 BASE_URL = os.getenv("BASE_URL", "http://localhost:4000/comment/music")
 LIMIT = 100
-CONCURRENCY = 5
-DELAY = 1.2
+CONCURRENCY = int(os.getenv("CONCURRENCY", "10"))  # 页面请求并发数
+SONG_CONCURRENCY = int(os.getenv("SONG_CONCURRENCY", "5"))  # 同时爬取的歌曲数量
+DELAY = float(os.getenv("DELAY", "0.8"))
 MAX_RETRIES = 3
 
 # MongoDB 配置
@@ -159,6 +160,10 @@ def save_to_mongodb(comments):
     return new_count
 
 # ================== 爬虫核心 ==================
+# 歌曲并发控制信号量
+song_semaphore = asyncio.Semaphore(SONG_CONCURRENCY)
+
+
 async def fetch_page(session, song_id, song_name, offset, storage):
     """获取单页评论，返回新插入的评论数"""
     params = {
@@ -200,90 +205,103 @@ async def fetch_page(session, song_id, song_name, offset, storage):
 
     return None, 0
 
-async def crawl_song(session, song_id, song_name, storage):
+
+async def crawl_song(session, song_id, song_name, storage, completed_songs, save_callback):
     """爬取单首歌的所有评论"""
-    offset = load_offset(song_id)
-    print(f"[INFO] 开始爬取歌曲: {song_name} (id={song_id}), 从 offset={offset} 开始")
+    async with song_semaphore:  # 控制同时爬取的歌曲数量
+        offset = load_offset(song_id)
+        print(f"[INFO] 开始爬取歌曲: {song_name} (id={song_id}), 从 offset={offset} 开始")
 
-    # 用于统计
-    total_comments = 0
-    total_new_comments = 0
-    page_count = 0
-    consecutive_duplicate_pages = 0  # 连续重复页数计数
+        # 用于统计
+        total_comments = 0
+        total_new_comments = 0
+        page_count = 0
+        consecutive_duplicate_pages = 0  # 连续重复页数计数
 
-    while True:
-        data, new_count = await fetch_page(session, song_id, song_name, offset, storage)
+        while True:
+            data, new_count = await fetch_page(session, song_id, song_name, offset, storage)
 
-        if not data:
-            print(f"[ERROR] song={song_id} 连续失败，终止")
-            break
-
-        # 保存当前 offset
-        save_offset(song_id, offset)
-
-        # 获取评论
-        comments = data.get("comments", [])
-        hot = data.get("hotComments", []) if offset == 0 else []
-        all_comments = hot + comments
-
-        if len(all_comments) == 0:
-            # 如果返回空数据，说明真的没有评论了
-            print(f"[INFO] song={song_id} 无更多评论, 共 {page_count} 页")
-            break
-
-        total_new_comments += new_count
-
-        # 如果新评论数为 0，说明都是重复的
-        if new_count == 0:
-            consecutive_duplicate_pages += 1
-            print(f"[WARN] song={song_id}, offset={offset}, 全部为重复评论 (连续 {consecutive_duplicate_pages} 页)")
-            if consecutive_duplicate_pages >= 3:
-                print(f"[INFO] song={song_id} 连续 3 页无新评论，停止爬取")
-                break
-        else:
-            consecutive_duplicate_pages = 0
-
-        if not data.get("more"):
-            if offset > 0 or len(comments) < LIMIT:
-                print(f"[INFO] song={song_id} 爬取完成, 共 {page_count + 1} 页")
+            if not data:
+                print(f"[ERROR] song={song_id} 连续失败，终止")
                 break
 
-        # 计算评论数
-        total_comments += len(all_comments)
-        page_count += 1
+            # 保存当前 offset
+            save_offset(song_id, offset)
 
-        offset += LIMIT
+            # 获取评论
+            comments = data.get("comments", [])
+            hot = data.get("hotComments", []) if offset == 0 else []
+            all_comments = hot + comments
 
-    print(f"[INFO] 歌曲 {song_id} 完成, 总计爬取 {total_comments} 条, 新增 {total_new_comments} 条")
-    return total_new_comments
+            if len(all_comments) == 0:
+                # 如果返回空数据，说明真的没有评论了
+                print(f"[INFO] song={song_id} 无更多评论, 共 {page_count} 页")
+                break
+
+            total_new_comments += new_count
+
+            # 如果新评论数为 0，说明都是重复的
+            if new_count == 0:
+                consecutive_duplicate_pages += 1
+                print(f"[WARN] song={song_id}, offset={offset}, 全部为重复评论 (连续 {consecutive_duplicate_pages} 页)")
+                if consecutive_duplicate_pages >= 3:
+                    print(f"[INFO] song={song_id} 连续 3 页无新评论，停止爬取")
+                    break
+            else:
+                consecutive_duplicate_pages = 0
+
+            if not data.get("more"):
+                if offset > 0 or len(comments) < LIMIT:
+                    print(f"[INFO] song={song_id} 爬取完成, 共 {page_count + 1} 页")
+                    break
+
+            # 计算评论数
+            total_comments += len(all_comments)
+            page_count += 1
+
+            offset += LIMIT
+
+        print(f"[INFO] 歌曲 {song_id} 完成, 总计爬取 {total_comments} 条, 新增 {total_new_comments} 条")
+
+        # 爬取成功后标记为已完成
+        song_id_str = str(song_id)
+        completed_songs.add(song_id_str)
+        save_callback()
+
+        return total_new_comments
+
 
 async def main_with_songs(songs):
-    """使用给定的歌曲列表运行"""
+    """使用给定的歌曲列表运行，多歌曲并发爬取"""
+    # 加载已完成的歌曲列表（统一转为字符串）
+    completed_songs = load_progress()
+    print(f"[INFO] 已完成 {len(completed_songs)} 首歌曲，将跳过这些歌曲")
+
+    # 过滤待爬取的歌曲
+    pending_songs = []
+    for song in songs:
+        song_id_str = str(song["id"])
+        if song_id_str not in completed_songs:
+            pending_songs.append(song)
+
+    print(f"[INFO] 待爬取 {len(pending_songs)} 首歌曲，{SONG_CONCURRENCY} 首并发")
+
+    async def save_callback():
+        """保存进度的回调函数"""
+        save_progress(completed_songs)
+
     async with aiohttp.ClientSession() as session:
-        # 加载已完成的歌曲列表（统一转为字符串）
-        completed_songs = load_progress()
-        print(f"[INFO] 已完成 {len(completed_songs)} 首歌曲，将跳过这些歌曲")
+        # 分批执行，每批 SONG_CONCURRENCY 首歌曲
+        for i in range(0, len(pending_songs), SONG_CONCURRENCY):
+            batch = pending_songs[i:i + SONG_CONCURRENCY]
+            print(f"[INFO] 批次 {i // SONG_CONCURRENCY + 1}，处理 {len(batch)} 首歌曲")
 
-        for song in songs:
-            song_id = song["id"]
-            song_name = song["name"]
-            song_id_str = str(song_id)  # 统一转为字符串比较
+            tasks = [
+                crawl_song(session, song["id"], song["name"], save_to_mongodb, completed_songs, save_callback)
+                for song in batch
+            ]
 
-            # 跳过已完成的歌曲
-            if song_id_str in completed_songs:
-                print(f"[SKIP] 歌曲已下载完成: {song_name} (id={song_id})")
-                continue
-
-            try:
-                new_count = await crawl_song(session, song_id, song_name, save_to_mongodb)
-                # 爬取成功后标记为已完成
-                completed_songs.add(song_id_str)
-                save_progress(completed_songs)
-            except Exception as e:
-                print(f"[ERROR] 爬取歌曲 {song_id} 时出错: {e}")
-                continue
-
-            await asyncio.sleep(0.5)
+            await asyncio.gather(*tasks)
 
 # ================== 分析函数（可选） ==================
 def analyze_time_distribution():
