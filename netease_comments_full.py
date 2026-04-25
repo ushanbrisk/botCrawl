@@ -59,10 +59,25 @@ def load_songs_from_file(filepath):
     return songs
 
 OFFSET_DIR = "/ssd4/music/comments/offset"
+PROGRESS_FILE = "/ssd4/music/comments/progress.json"
 
 def get_offset_file(song_id):
     """获取某首歌的 offset 文件路径"""
     return os.path.join(OFFSET_DIR, f"{song_id}.txt")
+
+def load_progress():
+    """加载已完成的歌曲ID列表"""
+    if os.path.exists(PROGRESS_FILE):
+        with open(PROGRESS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return set(data.get("completed_songs", []))
+    return set()
+
+def save_progress(completed_songs):
+    """保存已完成的歌曲ID列表"""
+    os.makedirs(os.path.dirname(PROGRESS_FILE), exist_ok=True)
+    with open(PROGRESS_FILE, "w", encoding="utf-8") as f:
+        json.dump({"completed_songs": list(completed_songs)}, f, ensure_ascii=False, indent=2)
 
 def load_offset(song_id):
     """加载某首歌的 offset"""
@@ -240,12 +255,24 @@ async def crawl_song(session, song_id, song_name, storage):
 async def main_with_songs(songs):
     """使用给定的歌曲列表运行"""
     async with aiohttp.ClientSession() as session:
+        # 加载已完成的歌曲列表
+        completed_songs = load_progress()
+        print(f"[INFO] 已完成 {len(completed_songs)} 首歌曲，将跳过这些歌曲")
+
         for song in songs:
             song_id = song["id"]
             song_name = song["name"]
 
+            # 跳过已完成的歌曲
+            if song_id in completed_songs:
+                print(f"[SKIP] 歌曲已下载完成: {song_name} (id={song_id})")
+                continue
+
             try:
-                await crawl_song(session, song_id, song_name, save_to_mongodb)
+                new_count = await crawl_song(session, song_id, song_name, save_to_mongodb)
+                # 爬取成功后标记为已完成
+                completed_songs.add(song_id)
+                save_progress(completed_songs)
             except Exception as e:
                 print(f"[ERROR] 爬取歌曲 {song_id} 时出错: {e}")
                 continue
