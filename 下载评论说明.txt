@@ -1,0 +1,35 @@
+1. 下载音乐评论
+
+conda env照旧
+
+python netease_coments_full.py
+
+
+
+2. 评论数据存入mongodb
+数据库:netease
+表格: comments
+
+
+3. # 评论offset保存目录
+OFFSET_DIR=/ssd/music/comments/offset
+
+# 下载进度文件
+PROGRESS_FILE=/ssd/music/comments/progress.json
+
+
+4. 变量配置在.env中
+
+# 评论offset保存目录
+OFFSET_DIR=/ssd/music/comments/offset
+
+# 下载进度文件
+PROGRESS_FILE=/ssd/music/comments/progress.json
+
+下载完的统一放到文件夹/ssd/music/comments/split[1-5]_comments_store中
+
+5. # 歌曲文件路径
+SONGS_FILE=unique_songs_by_name_part5.json
+TEST_SONGS_FILE=test_songs.json
+
+

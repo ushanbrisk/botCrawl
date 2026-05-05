@@ -12,7 +12,7 @@ load_dotenv()
 
 # ================== 配置区 ==================
 # 正式文件
-SONGS_FILE = os.getenv("SONGS_FILE", "unique_songs_by_name_part1.json")
+SONGS_FILE = os.getenv("SONGS_FILE", "")
 # 测试文件
 TEST_SONGS_FILE = os.getenv("TEST_SONGS_FILE", "test_songs.json")
 BASE_URL = os.getenv("BASE_URL", "http://localhost:4000/comment/music")
