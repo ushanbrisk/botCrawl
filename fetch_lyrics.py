@@ -48,6 +48,8 @@ def parse_lyric_text(lyric_text: str) -> list[dict]:
     """
     解析LRC歌词文本，返回时间线列表
     """
+    if not lyric_text:
+        return []
     lines = lyric_text.strip().split("\n")
     result = []
     for line in lines:
