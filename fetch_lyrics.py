@@ -159,7 +159,7 @@ def main():
     songs_file = Path(SONGS_FILE)
     if not songs_file.exists():
         # 尝试在当前目录查找
-        songs_file = Path(__file__).parent / SONG_FILE
+        songs_file = Path(__file__).parent / SONGS_FILE
         if not songs_file.exists():
             print(f"[错误] 歌曲文件不存在: {SONGS_FILE}")
             return
