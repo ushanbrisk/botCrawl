@@ -1,0 +1,12 @@
+.env   
+fetch_lyrics.py
+
+格外注意 .env中
+
+MONGO_COLLECTION需要替换
+url需要替换
+
+评论和歌词不一样
+
+
+
